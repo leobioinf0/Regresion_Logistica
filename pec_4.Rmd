@@ -1,0 +1,414 @@
+---
+title: 'Regresión Logística surgery'
+author: "Leonardo Madsen"
+date: "15/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(lmtest)
+library(plotly)
+library(ResourceSelection)
+library(car)
+library(ROCR)
+library(MASS)
+library(aod)
+```
+# Actividad final tema 4: Regresión Logística 
+
+El objetivo es investigar la influencia de posibles variables explicativas en el riesgo de complicaciones post-operatorias en pacientes con problemas pulmonares. Para ello se pide analizar los datos usando un modelo logístico adecuado.
+df: surgery.txt Variables explicativas: 
+• age: Edad del paciente en años
+• surgtype: Tipo de cirugía (1= Orthopedic, 2= Gynecological, 3= Abdominal) 
+• blocking: Agente bloqueante neuromuscular (1= Pancuronium (P), 2= Vecuronium (V), 3= Atracurium (A)) 
+• longact: Agente blanqueante neuromuscular codificado en función de la actividad a largo plazo (0= No (V,A), 1= Si (P), (ver codificación de la variable anterior)
+• duration: Duración de la operación en minutos 
+• tofratio: La razón T4/T1 en un test de estimulación train − of − four (TOF)
+*Variable respuesta:* Y =complicación: Â ¿El paciente experimenta complicación pulmonar? 0: No, 1: Si.
+Fuente: Regression with Linear Predictors, Andersen, Per Kragh, Skovgaard, Lene Theil, Springer (2010)
+
+
+```{r}
+df<- read.table("surgery.txt")
+#df$surgtype = factor(df$surgtype, labels = c("Orthopedic","Gynecological", "Abdominal"))
+df$surgtype = factor(df$surgtype)
+#df$blocking = factor(df$blocking, labels = c("Pancuronium","Vecuronium", "Atracurium"))
+df$blocking = factor(df$blocking)
+#df$longact = factor(df$longact, labels = c("No","Si"))
+df$longact = factor(df$longact)
+#df$complication = factor(df$complication, labels = c("No","Si"))
+df$complication = factor(df$complication)
+head(df)
+```
+
+
+##  Seleccionar aleatoriamente el conjunto de entrenamiento. El 80 % de los datos serán considerados para construir el modelo (training set). El resto de datos 20 % (test set) sería considerado en la posterior evaluación del modelo y debe ser ignorado en la primera parte del estudio, es decir, no tener en cuenta en la construcción del modelo.
+
+```{r}
+set.seed(101) # semilla 
+
+sample <- sample.int(n = nrow(df), size = floor(.80*nrow(df)), replace = F)
+train <- df[sample, ]
+test  <- df[-sample, ]
+```
+
+
+
+##  Usar un procedimiento secuencial para construir un modelo de regresión logística que permita explicar la variable respuesta a partir de la información dada por las variables explicativas.
+
+
+
+Dado que la variable 'longact' depende de 'blocking' primero comprobamos si esta ultima es conveniente meterla en el modelo. Tambien comentar que no centro la edad ya que he probado a hacerlo y proporciona los mismos resultados.
+
+```{r}
+#summary(glm(complication~age+surgtype+blocking+duration+tofratio, family = binomial, data=df))
+summary(glm(complication~age+surgtype+blocking+duration+tofratio, family = binomial, data=df))
+```
+
+Vemos como ningunos de los niveles de 'Blocking' es significativo por lo que no entraria en el mdelo y por tanto la variable 'longact' tampoco lo haria.
+
+```{r}
+modelo= glm(complication~ age+surgtype+blocking+duration+tofratio, family = binomial, data=df)
+modelo1=step(modelo)
+summary(modelo1)
+```
+
+Parece que el valor de 'surgtype'= 2 no es significativo habria que hacer un estudio un poco mas incisivo en este typo de variable que dada su naturaleza es una de las variable de interes y que habria que saber como es su interacion con la variable 'complication' dado que el estudio se basa en el post operatorio y sus posibles complicaciones.
+
+ 
+```{r}
+#Comparamos los valores 'surgtype'= 1 (Orthopedic)y 'surgtype'= 2 (Gynecological).
+summary(glm(complication ~ age+surgtype+duration+tofratio, 
+            subset=which(surgtype==c(1,2)),
+            family = binomial, 
+            data=df))
+```
+El modelo no seria adecuado. y las complicaciones dependerian de otras cosas.
+```{r}
+# Probamo con 'surgtype'= 1 (Orthopedic) y 'surgtype'= 3(Abdominal).
+summary(glm(complication~age+surgtype+duration+tofratio,
+            subset=which(surgtype==c(1,2)),
+            family = binomial, 
+            data=df))
+```
+Como veiamos en el modelo incial  'surgtype'= 3 si es significativa lo de lo que podemos deducir que las operaciones tipo 1 y 2 podrian tener efecto parecido en la varaible 'complications'
+```{r}
+#Probamos un modelo con  'surgtype'= 2 y 'surgtype'= 3.
+summary(glm(complication ~ age+surgtype+duration+tofratio, 
+            subset=which(surgtype==c(2,3)),
+            family = binomial, 
+            data=df))
+```
+
+Como podemos ver si no se tuviese en cuenta el tipo de cirugia 1  el modelo  resultante pasaria a desechar la variable 'tofratio' que sabes que era muy relevante en el modelo por las primeras impreciones dadas por la funcion step.
+
+
+En conclusion dado que el estudio es sobre el post-operatorio no tendria sentido no tener en cuenta el tipo de cirugia, cierto es que parece que el tipo 2 (Gynecological), no parece ser significativo para el modelo el estudio precisa de ella para no desviarse del tema.
+
+
+Coefficients:
+             Estimate Std. Error z value Pr(>|z|)    
+(Intercept) -5.544673   1.387633  -3.996 6.45e-05 ***
+age          0.042318   0.011233   3.767 0.000165 ***
+surgtype2    0.508743   0.654573   0.777 0.437033    
+surgtype3    2.079119   0.485171   4.285 1.82e-05 ***
+duration     0.005823   0.002556   2.278 0.022734 *  
+tofratio    -2.304075   1.138304  -2.024 0.042957 * 
+
+Nuestro modelo final es este, como podemos observar la variables 'tofratio' es la unica protectora por tanto a mayoers valores de test de estimulacion menor robabilidad de sufrir complicaciones. 
+La esdad es 
+
+
+
+
+
+
+
+### Otras forma:
+```{r}
+modelo.full <-glm(complication~ age+surgtype+blocking+duration+tofratio+longact, 
+                  data = train,
+                  family = binomial)
+summary(modelo.full)
+```
+
+```{r}
+modelo.inicial <-glm(complication ~ 1, 
+                     data = df, 
+                     family = binomial)
+summary(modelo.inicial)
+```
+
+```{r}
+modelo.stp <-stepAIC(modelo.inicial, 
+                     scope =list(upper = modelo.full), 
+                     direction = "both")
+summary(modelo.stp)
+``` 
+
+
+Como podemos ver con la funcion StepAIC podemos secuenciar la forma de encontrar el mejor modelo. 
+
+
+
+##  Estudio de la bondad de ajuste. Se requiere una explicación de los resultados obtenidos en los siguientes apartados: 
+### a) Contraste de regresión. Resolver mediante el test de razón de verosimilitudes 
+
+```{r}
+Anova(modelo1)
+```
+
+
+### b) Contraste de regresión. Resolver mediante el test de Hosmer-Lemeshow.
+
+```{r}
+hosmerlem <-function(y, yhat, g = 10){
+  cutyhat1 =cut(yhat, breaks =quantile(yhat, probs =seq(0, 1, 1/g)), include.lowest = TRUE)
+  obs =xtabs(cbind(1 - y, y) ~ cutyhat1)
+  expect =xtabs(cbind(1 - yhat, yhat) ~ cutyhat1)
+  chisq.C =sum((obs - expect)^2/expect)
+  P.C = 1 -pchisq(chisq.C, g - 2)
+  cutyhat2 =cut(yhat, breaks = g, include.lowest = TRUE)
+  obs =xtabs(cbind(1 - y, y) ~ cutyhat2)
+  expect =xtabs(cbind(1 - yhat, yhat) ~ cutyhat2)
+  chisq.H =sum((obs - expect)^2/expect)
+  P.H = 1 -pchisq(chisq.H, g - 2)
+  res <-data.frame(c(chisq.C, P.C),c(chisq.H, P.H))
+  colnames(res) <-c("Hosmer-Lemeshow C statistic", "Hosmer-Lemeshow H statistic")
+  rownames(res) <-c("X-squared", "p.value")
+  return(res)
+  }
+```
+```{r}
+hosmerlem(df$complication,fitted.values(modelo1))
+```
+
+
+ Con un p-valor tan alto podemos aceptar la hipotesis nula de que el modelo se ajusta a los df
+
+### c) Calcular el coeficiente $R^{2}$ de Nagelkerke. 
+
+```{r}
+LR <- modelo1$null.deviance - modelo1$deviance
+N <-sum(weights(modelo1))  
+RsqrCN <- 1 -exp(-LR/N)
+L0.adj <-exp(-modelo1$null.deviance/N)
+RsqrNal <- RsqrCN/(1 - L0.adj)
+RsqrNal
+```
+
+Pese a que globalmente el modelo se ajusta a los datos parece que no tiene un buen ajuste.
+
+
+
+
+### d) Construir la curva ROC y calcular el área bajo la curva.
+```{r}
+pred <-prediction(fitted.values(modelo1), df$complication)
+```
+
+
+```{r}
+# auc : Area under curve
+AUC <-performance(pred, "auc")
+perf2 <-performance(pred, "tpr", "fpr")
+plot(perf2, colorize = TRUE)
+abline(a = 0, b = 1)
+text(0.4, 0.6,paste(AUC@y.name, "\n",round(unlist(AUC@y.values), 3)), cex = 0.7)
+```
+
+
+### e) Obtener el punto de corte óptimo, $p_{opt}$ 
+```{r}
+#pred <-prediction(fitted.values(modelo1), df$complication)
+perf1 <-performance(pred, measure = "acc")
+# el punto de corte que maximiza'acc'es
+(posicion.max <-sapply(perf1@y.values, which.max))
+```
+
+Punto de corte:
+```{r}
+(punto.corte <-sapply(perf1@x.values, "[", posicion.max))
+```
+
+
+```{r}
+plot(perf1, col = "darkred")
+abline(h = 0.9, lty = 2)
+abline(v = punto.corte, lty = 2)
+```
+
+### f) Cuantifica la capacidad predictiva del modelo en el conjunto de entrenamiento.
+
+
+```{r}
+pred.modelo.stp <-prediction(fitted.values(modelo.stp), df$complication)
+perf.modelo.stp <-performance(pred.modelo.stp, "tpr", "fpr")
+AUC.modelo.stp <-performance(pred.modelo.stp, "auc")
+AUC.modelo.stp@y.values
+```
+
+Vemos que el modelo tiene ua capacidad predictiva del 82%. 
+
+
+
+
+##  Modelo definitivo.
+
+### a) Presentación de la ecuación del modelo en términos de logits, de odds y de probabilidad.
+```{r}
+summary(modelo1)
+```
+
+El resultado anterior muestra la estimación de los coeficientes beta de regresión y sus niveles de significancia.
+La intersección ($b_0$) es $-7.81$ y el coeficiente de la variable $age$ es $0.042$.
+$Pr (> | z |)$: El valor p correspondiente al estadístico z. Cuanto menor sea el valor p, más significativa es la estimación. 
+
+La ecuación logística se puede escribir como $p = \frac{exp(-5.54 + 0,042 * age)}{1 + exp(-6,32 + 0,042 * age)}$.
+
+$$ESCRIBIR EQUATION$$
+
+En la salida anterior, lo primero que vemos es la llamada, esto es R recordándonos cuál era el modelo que ejecutamos, qué opciones especificamos, etc.
+```{r}
+summary(modelo1)$call
+```
+  La siguiente parte del resultado muestra los coeficientes, sus errores estándar, el estadístico z (a veces llamado estadístico z de Wald) y los valores p asociados. 
+  
+```{r}
+summary(modelo1)$coefficients
+``` 
+
+
+  Pasamos a obtener intervalos de confianza para las estimaciones de coeficientes. En los modelos logísticos, los intervalos de confianza se basan en la función de probabilidad logarítmica perfilada. 
+  
+
+```{r}
+## CIs using profiled log-likelihood
+confint(modelo1)
+```
+También podemos obtener CI basados solo en los errores estándar 
+```{r}
+## CIs using standard errors
+confint.default(modelo1)
+```
+
+
+Testeamos el efecto general del $surgtype$ usando la función $wald.test$ de la biblioteca aod. 
+ **b** proporciona los coeficientes
+ **Sigma**  matriz de covarianza de varianza de los términos de error, 
+ **Terms** Términos del modelo se van a probar; en este caso, surgtypeGynecologica y surgtypeAbdominal (3 y 4).
+```{r}
+wald.test(b = coef(modelo1), 
+          Sigma = vcov(modelo1), 
+          Terms = 3:4)
+```
+El estadístico de la prueba de chi-cuadrado de 24.9, con dos grados de libertad, se asocia con un valor p de 4e-06, lo que indica que el efecto general del rango es estadísticamente significativo.
+
+```{r}
+coef(modelo1)
+```
+
+
+
+
+```{r}
+modelo.stp
+```
+
+
+### b) Interpretación de los coeficientes del modelo: factores de riesgo y factores protectores.
+
+```{r}
+summary(modelo1)
+```
+
+
+    $age$, $surgtype3$,  $duration$ y $tofratio$ son estadísticamente significativos. 
+    Los coeficientes de regresión logística dan el cambio en las probabilidades logarítmicas del resultado para un aumento de una unidad en la variable predictora.
+    $age$, $surgtype3$,  $duration$ son factores de riesgo:
+    Por cada cambio de una unidad en $age$, las probabilidades logarítmicas de complicaciones pulmonares post-operatorias (versus no complicaciones) aumentan en 0.04.
+    Para un aumento de una unidad en $duration$ , las probabilidades logarítmicas de complicaciones aumentan en 0.005.
+    Las variables indicadoras del tipo de cirugía ($surgtype$) tienen una interpretación ligeramente diferente. Haber tenido una cirugía 3,  en comparación con Haber tenido una cirugía 1, cambia las probabilidades logarítmicas de complicaciones en 2.07.
+    
+    Al contrario que las tres variables anteriores, $tofratio$ tiene un efecto de proteccion frente a complicaciones ya que por cada cambio de una unidad en $tofratio$, las probabilidades logarítmicas de complicaciones pulmonares post-operatorias disminuyen en "-2.30"
+
+##  Diagnóstico de residuos gráficamente. Razonar si existen deficiencias en el modelo
+
+```{r}
+modelo1.res = resid(modelo1)
+```
+
+```{r}
+plot(df$age, modelo1.res, ylab="Residuals", xlab="age", main="surgery") 
+abline(0, 0)                  # the horizon 
+```
+
+
+```{r}
+plot(df$surgtype, modelo1.res, ylab="Residuals", xlab="surgtype", main="surgery") 
+abline(0, 0)                  # the horizon 
+```
+```{r}
+plot(df$duration, modelo1.res, ylab="Residuals", xlab="duration", main="surgery") 
+abline(0, 0)                  # the horizon 
+```
+```{r}
+plot(df$tofratio, modelo1.res, ylab="Residuals", xlab="tofratio", main="surgery") 
+abline(0, 0)                  # the horizon 
+```
+
+
+
+## Evaluación del modelo en el conjunto de test (20 % de los datos que has dejado aparte anteriormente).
+
+### a) Usando el modelo ajustado, clasificar los individuos del conjunto de test en las clases Y = 0 o Y = 1. Usar la probabilidad de corte óptima, $p_{opt}$  calculada anteriormente.
+```{r}
+# Logistics Regression
+modelo= glm(complication~ age+surgtype+blocking+duration+tofratio, family = binomial, data=train)
+modelo1=step(modelo)
+summary(modelo1)
+```
+
+```{r}
+glm.probs <- predict(modelo1,
+                     newdata = test,
+                     type = "response")
+glm.probs[1:5]
+```
+```{r}
+glm.probs[1:15]
+```
+
+```{r}
+test$complication[1:15]
+```
+```{r}
+test$complication
+```
+
+```{r}
+punto.corte
+```
+
+```{r}
+glm.pred <- ifelse(glm.probs > punto.corte, 1, 0)
+glm.pred
+```
+
+### b) Construir la tabla de clasificación para el conjunto test − set. Valorar el resultado
+
+```{r}
+class(test$complication)
+```
+```{r}
+glm.pred
+```
+
+```{r}
+table(glm.pred, test$complication)
+```
+```{r}
+mean(glm.pred == test$complication)
+```
+
